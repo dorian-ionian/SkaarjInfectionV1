@@ -66,7 +66,21 @@ event InitGame(string Options, out string Error)
     bWaitForNetPlayers = false;
     MinNetPlayers = 0;
 
-    log("SkaarjInfection: init - round " $ RoundTimeLimit $ "s best of " $ RoundsPerMatch, 'SkaarjInfectionV1');
+    // No stock DM bots - the horde is the "bot team". bAutoNumBots/NeedPlayers
+    // would otherwise keep adding/removing stock bots as players join/leave.
+    MinPlayers = 0;
+    InitialBots = 0;
+    bAutoNumBots = false;
+    bBalanceTeams = false;
+    bPlayersBalanceTeams = false;
+
+    HordeMax        = Max(0, GetIntOption(Options, "HordeMax", default.HordeMax));
+    HordeInterval   = Max(2, float(GetIntOption(Options, "HordeInterval", int(default.HordeInterval))));
+    HordeHealthBonus = Max(0, GetIntOption(Options, "HordeHealthBonus", default.HordeHealthBonus));
+    HordeDamageBonus = Max(0, GetIntOption(Options, "HordeDamageBonus", default.HordeDamageBonus));
+
+    log("SkaarjInfection: init - round " $ RoundTimeLimit $ "s best of " $ RoundsPerMatch
+        $ " horde " $ HordeMax $ " every " $ int(HordeInterval) $ "s", 'SkaarjInfectionV1');
 }
 
 function PostBeginPlay()
@@ -97,6 +111,110 @@ function bool ChangeTeam(Controller Other, int num, bool bNewTeam)
     if (bNewTeam)
         return false;
     return Super.ChangeTeam(Other, num, bNewTeam);
+}
+
+// The horde is the only "bot" force - the stock bot management must never
+// add/remove DM bots to fill the server.
+function bool NeedPlayers()
+{
+    return false;
+}
+
+function bool TooManyBots(Controller botToRemove)
+{
+    return true;
+}
+
+//==============================================================================
+// Horde (AI infected monsters)
+//==============================================================================
+
+function int CountHorde()
+{
+    local int i, n;
+    for (i = 0; i < HordeMonsters.Length; i++)
+        if (HordeMonsters[i] != None && HordeMonsters[i].Health > 0 && !HordeMonsters[i].bDeleteMe)
+            n++;
+    return n;
+}
+
+function class<Monster> GetHordeClass()
+{
+    local int r;
+    r = Rand(5);
+    if (r == 0)
+        return class'SkaarjPack.Skaarj';
+    if (r == 1)
+        return class'SkaarjPack.Krall';
+    if (r == 2)
+        return class'SkaarjPack.EliteKrall';
+    if (r == 3)
+        return class'SkaarjPack.FireSkaarj';
+    return class'SkaarjPack.Brute';
+}
+
+function Monster SpawnHordeMonster()
+{
+    local class<Monster> MC;
+    local NavigationPoint S;
+    local Monster M;
+    local InfectionMonsterController C;
+    local Pawn T;
+
+    MC = GetHordeClass();
+    S = FindPlayerStart(None, 1);
+    if (S == None)
+        return None;
+    M = Spawn(MC,,, S.Location + vect(0, 0, 30), S.Rotation);
+    if (M == None)
+        return None;
+    M.DeactivateSpawnProtection();
+    M.HealthMax = M.Health + HordeHealthBonus;
+    M.Health = M.HealthMax;
+    if (M.Controller != None)
+        M.Controller.Destroy();
+    C = Spawn(class'InfectionMonsterController');
+    if (C != None)
+    {
+        C.Possess(M);
+        C.InitializeSkill(7.0);
+        T = FindNearestHuman(M, 99999);
+        if (T != None)
+            C.SetGrudge(T);
+    }
+    HordeMonsters[HordeMonsters.Length] = M;
+    return M;
+}
+
+function CleanupHorde()
+{
+    local int i;
+    local InfectionMonsterController C;
+    local array<InfectionMonsterController> Ghosts;
+
+    for (i = HordeMonsters.Length - 1; i >= 0; i--)
+    {
+        if (HordeMonsters[i] == None || HordeMonsters[i].Health <= 0 || HordeMonsters[i].bDeleteMe)
+            HordeMonsters.Remove(i, 1);
+    }
+    foreach DynamicActors(class'InfectionMonsterController', C)
+        if (C.Pawn == None)
+            Ghosts[Ghosts.Length] = C;
+    for (i = 0; i < Ghosts.Length; i++)
+        if (Ghosts[i] != None)
+            Ghosts[i].Destroy();
+}
+
+function SpawnHordeWave()
+{
+    local int i, n;
+    n = HordeMax - CountHorde();
+    if (n <= 0)
+        return;
+    if (n > 3)
+        n = 3;
+    for (i = 0; i < n; i++)
+        SpawnHordeMonster();
 }
 
 //==============================================================================
@@ -137,7 +255,10 @@ function StartRound()
     Phase = PHASE_FIGHT;
     PhaseClock = 0;
     bLastHumanWarned = false;
+    HordeClock = 0;
+    bHordePaused = false;
     CureEveryone();   // no-one carries infection into the next round
+    CleanupHorde();
     Broadcast(Self, "ROUND " $ RoundNumber $ " OF " $ RoundsPerMatch $ ": SURVIVE - OR JOIN THE HORDE!", 'CriticalEvent');
 }
 
@@ -242,6 +363,23 @@ function class<Monster> GetInfectionClass(int Tier)
 }
 
 //==============================================================================
+// Horde damage scaling (horde monsters hit harder than the player horde)
+//==============================================================================
+
+function int ReduceDamage(int Damage, pawn injured, pawn instigatedBy, vector HitLocation, out vector Momentum, class<DamageType> DamageType)
+{
+    local InfectionMonsterController C;
+
+    if (instigatedBy != None)
+    {
+        C = InfectionMonsterController(instigatedBy.Controller);
+        if (C != None)
+            Damage += HordeDamageBonus;
+    }
+    return Super.ReduceDamage(Damage, injured, instigatedBy, HitLocation, Momentum, DamageType);
+}
+
+//==============================================================================
 // Respawn
 //==============================================================================
 
@@ -341,6 +479,23 @@ function Pawn FindNearestHuman(Pawn Self, float MaxDist)
 }
 
 //==============================================================================
+// Horde damage scaling (horde monsters hit harder than the player horde)
+//==============================================================================
+
+function int ReduceDamage(int Damage, pawn injured, pawn instigatedBy, vector HitLocation, out vector Momentum, class<DamageType> DamageType)
+{
+    local InfectionMonsterController C;
+
+    if (instigatedBy != None)
+    {
+        C = InfectionMonsterController(instigatedBy.Controller);
+        if (C != None)
+            Damage += HordeDamageBonus;
+    }
+    return Super.ReduceDamage(Damage, injured, instigatedBy, HitLocation, Momentum, DamageType);
+}
+
+//==============================================================================
 // Combat events
 //==============================================================================
 
@@ -415,10 +570,26 @@ function RoundTick()
     local int Humans;
 
     CleanupStaleInfected();
+    CleanupHorde();
 
     if (Phase == PHASE_FIGHT)
     {
         PhaseClock = PhaseClock + 1.0;
+
+        // The horde closes in while humans are alive - pause during
+        // intermission/result so the next round starts fresh.
+        if (!bHordePaused)
+        {
+            HordeClock = HordeClock + 1.0;
+            if (HordeClock >= HordeInterval)
+            {
+                HordeClock = 0;
+                SpawnHordeWave();
+            }
+            // keep horde monsters pointed at the nearest human
+            RefreshHordeGrudges();
+        }
+
         Humans = HumansAlive();
         if (Humans == 0)
         {
@@ -435,6 +606,7 @@ function RoundTick()
     }
     else if (Phase == PHASE_RESULT)
     {
+        bHordePaused = true;
         PhaseClock = PhaseClock + 1.0;
         if (PhaseClock >= ResultTime)
         {
@@ -454,6 +626,25 @@ function RoundTick()
         PhaseClock = PhaseClock + 1.0;
         if (PhaseClock >= IntermissionTime)
             StartNewMatchup();
+    }
+}
+
+function RefreshHordeGrudges()
+{
+    local int i;
+    local InfectionMonsterController C;
+    local Pawn T;
+
+    for (i = 0; i < HordeMonsters.Length; i++)
+    {
+        if (HordeMonsters[i] == None || HordeMonsters[i].Health <= 0 || HordeMonsters[i].bDeleteMe)
+            continue;
+        C = InfectionMonsterController(HordeMonsters[i].Controller);
+        if (C == None)
+            continue;
+        T = FindNearestHuman(HordeMonsters[i], 99999);
+        if (T != None)
+            C.SetGrudge(T);
     }
 }
 
@@ -542,7 +733,12 @@ defaultproperties
      EvolveAt(4)=14
      ResultTime=5.000000
      IntermissionTime=8.000000
+     HordeMax=8
+     HordeInterval=12.000000
+     HordeHealthBonus=20
+     HordeDamageBonus=2
      bAllowBehindView=True
      bBalanceTeams=True
      bPlayersBalanceTeams=True
+     PlayerControllerClassName="SkaarjInfectionV1.InfectionPlayerController"
 }
