@@ -282,6 +282,71 @@ function TeleportNextToEnemy()
     Pawn.Velocity = vect(0,0,0);
 }
 
+//------------------------------------------------------------------------------
+// RangedAttack - guard the stock state against a None Target (which spams
+// "Accessed None 'Target'" whenever the player or a dead grudge clears it).
+//------------------------------------------------------------------------------
+
+state RangedAttack
+{
+ignores SeePlayer, HearNoise, Bump;
+
+    function BeginState()
+    {
+        StopStartTime = Level.TimeSeconds;
+        bHasFired = false;
+        if (Pawn != None)
+            Pawn.Acceleration = vect(0,0,0);
+        if (Target == None)
+            Target = Enemy;
+        if (Target == None)
+        {
+            // nothing to attack - go find a human or fall back to roaming
+            GotoState('Charging');
+            return;
+        }
+        SetTimer(0.4, true);
+    }
+
+    function EndState()
+    {
+        SetTimer(0, false);
+    }
+
+    function Timer()
+    {
+        if (Target == None || Pawn == None || Pawn.Health <= 0)
+        {
+            SetTimer(0, false);
+            WhatToDoNext(43);
+            return;
+        }
+        TimedFireWeaponAtEnemy();
+    }
+
+Begin:
+    if (Enemy == None || Pawn == None || Target == None)
+    {
+        Sleep(0.5);
+        WhatToDoNext(43);
+        Goto('Begin');
+    }
+    Focus = Target;
+    Sleep(0.0);
+    if (NeedToTurn(Target.Location))
+    {
+        Focus = Target;
+        FinishRotation();
+    }
+    bHasFired = true;
+    if (Target == Enemy)
+        TimedFireWeaponAtEnemy();
+    else
+        FireWeaponAt(Target);
+    Sleep(FMax(Monster(Pawn).RangedAttackTime(), 0.2 + (0.5 + 0.5 * FRand()) * 0.4 * (7 - Skill)));
+    WhatToDoNext(36);
+}
+
 defaultproperties
 {
 }

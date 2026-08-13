@@ -41,6 +41,12 @@ simulated event PostNetReceive()
     bNetNotify = false;
 }
 
+// Never let xBot.Possess()/xPawn.Setup() swap this monster's mesh for a
+// human character - the horde must keep its monster look (and animations).
+simulated function Setup(xUtil.PlayerRecord rec, optional bool bLoadNow)
+{
+}
+
 defaultproperties
 {
      AttackCooldown=1.000000
