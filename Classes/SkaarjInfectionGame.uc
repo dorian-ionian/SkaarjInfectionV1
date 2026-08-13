@@ -542,6 +542,7 @@ defaultproperties
      EvolveAt(4)=14
      ResultTime=5.000000
      IntermissionTime=8.000000
+     bAllowBehindView=True
      bBalanceTeams=True
      bPlayersBalanceTeams=True
 }
