@@ -24,10 +24,21 @@ function SetGrudge(Pawn Other)
     }
 }
 
+// Drop the grudge entirely - the monster returns to stock roaming/AI.
+function ClearGrudge()
+{
+    GrudgeEnemy = None;
+    Enemy = None;
+    Target = None;
+}
+
+// Only acquire a grudge when a human is within the configured hunt range -
+// otherwise the horde would be omniscient and swarm from across the map.
 function Pawn FindNearestHuman()
 {
     local SkaarjInfectionGame G;
     local Monster M;
+    local float Range;
 
     if (Pawn == None || Level.Game == None)
         return None;
@@ -37,7 +48,8 @@ function Pawn FindNearestHuman()
     M = Monster(Pawn);
     if (M == None)
         return None;
-    return G.FindNearestHuman(M, 99999);
+    Range = G.HordeHuntRange;
+    return G.FindNearestHuman(M, Range);
 }
 
 function bool GrudgeAlive()

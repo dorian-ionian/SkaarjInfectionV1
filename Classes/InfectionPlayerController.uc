@@ -1,30 +1,71 @@
 //=============================================================================
 // InfectionPlayerController
-// Custom player controller for the infection gametype. The stock xPlayer
-// routes the fire button through the pawn's Weapon/Inventory chain, which
-// does nothing for a monster pawn - so infected players get their attack
-// wired to the monster's own Fire() instead, and the AI attack cooldown is
-// disabled while a human is at the wheel.
+// Custom player controller for the infection gametype.
+//
+// WHY THE RPC: the Fire key is bound to the "Fire" exec, which runs on the
+// CLIENT - and clients have no Level.Game, so the monster pawn's Fire()
+// can't resolve targets or deal damage there. The exec therefore forwards
+// to a reliable server RPC that performs the actual attack (find nearest
+// human, aim, RangedAttack) so damage is applied authoritatively.
 //=============================================================================
 class InfectionPlayerController extends xPlayer;
 
-// Forward the fire button to the monster pawn's own attack. The stock
-// PlayerController already calls Pawn.Fire() - but the Pawn class passes
-// it to the inventory chain; monsters need their own Fire() to run, and
-// they need the AI attack cooldown disabled while human-controlled.
-function Fire(float F)
+replication
+{
+    reliable if (Role < ROLE_Authority)
+        ServerMonsterAttack;
+}
+
+simulated function PostBeginPlay()
+{
+    Super.PostBeginPlay();
+    if (Role == ROLE_Authority)
+        log("InfectionPlayerController: active for player", 'SkaarjInfectionV1');
+}
+
+// Fire button: player-controlled monsters attack server-side. Humans keep
+// the stock weapon path.
+exec function Fire(optional float F)
+{
+    if (Monster(Pawn) != None)
+        ServerMonsterAttack();
+    else
+        Super.Fire(F);
+}
+
+exec function AltFire(optional float F)
+{
+    if (Monster(Pawn) != None)
+        ServerMonsterAttack();
+    else
+        Super.AltFire(F);
+}
+
+// Server-side monster attack: find the nearest living human, face them and
+// trigger the monster's own RangedAttack (anims, melee, projectiles).
+function ServerMonsterAttack()
 {
     local Monster M;
+    local SkaarjInfectionGame G;
+    local Pawn T;
 
-    M = Monster(Pawn);
-    if (M != None)
-    {
-        // the monster pawn's own Fire() runs the stock attack (RangedAttack
-        // chain) - bypass the weapon/inventory requirement entirely
-        M.Fire(F);
+    if (Role < ROLE_Authority)
         return;
-    }
-    Super.Fire(F);
+    M = Monster(Pawn);
+    if (M == None || M.Health <= 0 || M.bDeleteMe)
+        return;
+    G = SkaarjInfectionGame(Level.Game);
+    if (G == None)
+        return;
+    T = G.FindNearestHuman(M, G.AttackRange);
+    if (T == None)
+        return;
+    // aim the monster at the victim (melee checks trace forward)
+    M.SetRotation(rotator(T.Location - M.Location));
+    SetRotation(rotator(T.Location - M.Location));
+    Target = T;               // the monster's MeleeDamageTarget reads this
+    M.RangedAttack(T);
+    log("INF-ATK: " $ M.Class $ " -> " $ T.Class, 'SkaarjInfectionV1');
 }
 
 defaultproperties

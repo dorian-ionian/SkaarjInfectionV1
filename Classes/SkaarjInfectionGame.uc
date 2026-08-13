@@ -23,10 +23,13 @@ var() config int    PointsForKill;      // evolution points per human kill (defa
 var() config int    EvolveAt[5];        // points needed for each tier
 var() config float  ResultTime;         // seconds to linger on a result (default 5)
 var() config float  IntermissionTime;   // seconds between matchups (default 8)
-var() config int    HordeMax;           // max AI horde monsters on the field (default 8)
-var() config float  HordeInterval;      // seconds between horde spawns (default 12)
+var() config int    HordeMax;           // max AI horde monsters on the field (default 5)
+var() config float  HordeInterval;      // seconds between horde spawns (default 15)
 var() config int    HordeHealthBonus;   // bonus health per horde monster (default 20)
 var() config int    HordeDamageBonus;   // bonus melee damage per horde monster (default 2)
+var() config float  HordeHuntRange;     // horde only homes in on humans inside this range (default 1800)
+var() config float  HordeSpeedScale;    // horde ground speed multiplier (default 0.75)
+var() config float  AttackRange;        // player monster attack reach (default 1300)
 
 const PHASE_IDLE         = 0;
 const PHASE_FIGHT        = 1;
@@ -85,6 +88,9 @@ event InitGame(string Options, out string Error)
     HordeInterval   = Max(2, float(GetIntOption(Options, "HordeInterval", int(default.HordeInterval))));
     HordeHealthBonus = Max(0, GetIntOption(Options, "HordeHealthBonus", default.HordeHealthBonus));
     HordeDamageBonus = Max(0, GetIntOption(Options, "HordeDamageBonus", default.HordeDamageBonus));
+    HordeHuntRange  = Max(300, float(GetIntOption(Options, "HordeHuntRange", int(default.HordeHuntRange))));
+    HordeSpeedScale = FClamp(GetIntOption(Options, "HordeSpeedScale", int(default.HordeSpeedScale * 100)) / 100.0, 0.2, 1.5);
+    AttackRange     = Max(200, float(GetIntOption(Options, "AttackRange", int(default.AttackRange))));
 
     log("SkaarjInfection: init - round " $ RoundTimeLimit $ "s best of " $ RoundsPerMatch
         $ " horde " $ HordeMax $ " every " $ int(HordeInterval) $ "s", 'SkaarjInfectionV1');
@@ -169,7 +175,9 @@ function Monster SpawnHordeMonster()
     local Pawn T;
 
     MC = GetHordeClass();
-    S = FindPlayerStart(None, 1);
+    S = FindFarPlayerStart();
+    if (S == None)
+        S = FindPlayerStart(None, 1);
     if (S == None)
         return None;
     M = Spawn(MC,,, S.Location + vect(0, 0, 30), S.Rotation);
@@ -178,6 +186,7 @@ function Monster SpawnHordeMonster()
     M.DeactivateSpawnProtection();
     M.HealthMax = M.Health + HordeHealthBonus;
     M.Health = M.HealthMax;
+    M.GroundSpeed = M.default.GroundSpeed * HordeSpeedScale;
     if (M.Controller != None)
         M.Controller.Destroy();
     C = Spawn(class'InfectionMonsterController');
@@ -185,12 +194,54 @@ function Monster SpawnHordeMonster()
     {
         C.Possess(M);
         C.InitializeSkill(7.0);
-        T = FindNearestHuman(M, 99999);
+        T = FindNearestHuman(M, HordeHuntRange);
         if (T != None)
             C.SetGrudge(T);
     }
     HordeMonsters[HordeMonsters.Length] = M;
     return M;
+}
+
+// Spawn horde monsters at the player start FARTHEST from the nearest human,
+// so the horde creeps in from the edges instead of materialising on top of
+// the players.
+function NavigationPoint FindFarPlayerStart()
+{
+    local PlayerStart P, Best;
+    local Pawn H;
+    local float bd, d;
+    local Controller C;
+
+    // nearest human to any location - first alive human pawn is the reference
+    for (C = Level.ControllerList; C != None && H == None; C = C.NextController)
+    {
+        if (C.Pawn == None || C.Pawn.Health <= 0 || C.Pawn.bDeleteMe)
+            continue;
+        if (C.PlayerReplicationInfo == None || C.PlayerReplicationInfo.Team == None)
+            continue;
+        if (C.PlayerReplicationInfo.Team.TeamIndex != 0)
+            continue;
+        if (C.PlayerReplicationInfo.bOnlySpectator)
+            continue;
+        H = C.Pawn;
+    }
+
+    bd = -1;
+    foreach AllActors(class'PlayerStart', P)
+    {
+        if (InStr(string(P.Class), "ONSPlayerStart") != -1)
+            continue;
+        if (H != None)
+            d = VSize(P.Location - H.Location);
+        else
+            d = FRand();
+        if (d > bd)
+        {
+            bd = d;
+            Best = P;
+        }
+    }
+    return Best;
 }
 
 function CleanupHorde()
@@ -464,6 +515,8 @@ function Pawn FindNearestHuman(Pawn Self, float MaxDist)
     local float bd, d;
     local Controller C;
 
+    if (Self == None)
+        return None;
     bd = MaxDist;
     for (C = Level.ControllerList; C != None; C = C.NextController)
     {
@@ -632,9 +685,11 @@ function RefreshHordeGrudges()
         C = InfectionMonsterController(HordeMonsters[i].Controller);
         if (C == None)
             continue;
-        T = FindNearestHuman(HordeMonsters[i], 99999);
+        T = FindNearestHuman(HordeMonsters[i], HordeHuntRange);
         if (T != None)
             C.SetGrudge(T);
+        else if (C.GrudgeEnemy == None || C.GrudgeEnemy.Health <= 0 || C.GrudgeEnemy.bDeleteMe)
+            C.ClearGrudge();   // no human nearby - back to stock roaming
     }
 }
 
@@ -723,10 +778,13 @@ defaultproperties
      EvolveAt(4)=14
      ResultTime=5.000000
      IntermissionTime=8.000000
-     HordeMax=8
-     HordeInterval=12.000000
+     HordeMax=5
+     HordeInterval=15.000000
      HordeHealthBonus=20
      HordeDamageBonus=2
+     HordeHuntRange=1800.000000
+     HordeSpeedScale=0.750000
+     AttackRange=1300.000000
      bAllowBehindView=True
      bBalanceTeams=True
      bPlayersBalanceTeams=True
