@@ -34,6 +34,14 @@ function Fire(optional float F)
     NextAttackTime = Level.TimeSeconds + AttackCooldown;
 }
 
+// A player-possessed monster must NEVER get the player's human character
+// mesh applied - xPawn.PostNetReceive() would otherwise swap this Pupae's
+// mesh for the player's ("BotD" etc), breaking every monster animation.
+simulated event PostNetReceive()
+{
+    bNetNotify = false;
+}
+
 defaultproperties
 {
      AttackCooldown=1.000000

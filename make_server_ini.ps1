@@ -105,7 +105,7 @@ for ($i = 0; $i -lt $lines.Count; $i++)
     elseif ($lines[$i] -match '^AdminPassword=')
         { $lines[$i] = "AdminPassword=CHANGE_ME" }
     elseif ($lines[$i] -match '^GamePassword=')
-        { $lines[$i] = "GamePassword=CHANGE_ME" }
+        { $lines[$i] = "GamePassword=" }
     elseif ($lines[$i] -match '^SavedPasswords=')
         { $lines[$i] = "SavedPasswords=" }
 }

@@ -511,7 +511,10 @@ function CureEveryone()
         // controller transitions cleanly, then respawn them as humans
         if (C.Pawn != None && C.Pawn.Health > 0 && !C.Pawn.bDeleteMe)
             C.Pawn.KilledBy(C.Pawn);
-        C.PawnClass = None;
+        // NOTE: NEVER set PawnClass=None - the stock spawner would then
+        // try the abstract Engine.Pawn (from the URL Class option) and
+        // fail forever with 'Couldn't spawn player of type None'.
+        C.PawnClass = class'XGame.xPawn';
         ChangeTeam(C, 0, false);
     }
     InfectedList.Length = 0;

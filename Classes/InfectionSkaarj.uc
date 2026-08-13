@@ -34,6 +34,13 @@ function Fire(optional float F)
     NextAttackTime = Level.TimeSeconds + AttackCooldown;
 }
 
+// Never let xPawn.PostNetReceive() swap this monster's mesh for the
+// player's human character mesh.
+simulated event PostNetReceive()
+{
+    bNetNotify = false;
+}
+
 defaultproperties
 {
      AttackCooldown=1.000000
