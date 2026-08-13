@@ -23,6 +23,10 @@ var() config int    PointsForKill;      // evolution points per human kill (defa
 var() config int    EvolveAt[5];        // points needed for each tier
 var() config float  ResultTime;         // seconds to linger on a result (default 5)
 var() config float  IntermissionTime;   // seconds between matchups (default 8)
+var() config int    HordeMax;           // max AI horde monsters on the field (default 8)
+var() config float  HordeInterval;      // seconds between horde spawns (default 12)
+var() config int    HordeHealthBonus;   // bonus health per horde monster (default 20)
+var() config int    HordeDamageBonus;   // bonus melee damage per horde monster (default 2)
 
 const PHASE_IDLE         = 0;
 const PHASE_FIGHT        = 1;
@@ -39,6 +43,9 @@ var bool bShowStarted;
 var bool bMatchupOver;
 var bool bDriverActive;
 var bool bLastHumanWarned;
+var array<Monster> HordeMonsters;      // AI horde - monsters hunting humans
+var float HordeClock;                  // seconds since last horde spawn
+var bool bHordePaused;
 
 var array<Controller> InfectedList;
 var array<int> InfectedPoints;
@@ -476,23 +483,6 @@ function Pawn FindNearestHuman(Pawn Self, float MaxDist)
         }
     }
     return Best;
-}
-
-//==============================================================================
-// Horde damage scaling (horde monsters hit harder than the player horde)
-//==============================================================================
-
-function int ReduceDamage(int Damage, pawn injured, pawn instigatedBy, vector HitLocation, out vector Momentum, class<DamageType> DamageType)
-{
-    local InfectionMonsterController C;
-
-    if (instigatedBy != None)
-    {
-        C = InfectionMonsterController(instigatedBy.Controller);
-        if (C != None)
-            Damage += HordeDamageBonus;
-    }
-    return Super.ReduceDamage(Damage, injured, instigatedBy, HitLocation, Momentum, DamageType);
 }
 
 //==============================================================================
